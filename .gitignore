@@ -1,0 +1,17 @@
+# Dependencies
+node_modules/
+
+# Environment variables (contains secret tokens!)
+.env
+
+# Database files
+bot.db
+bot.db-shm
+bot.db-wal
+
+# IDE
+.idea/
+.vscode/
+
+# Claude
+.claude/
