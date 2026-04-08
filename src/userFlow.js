@@ -1,6 +1,6 @@
 const { InlineKeyboard, Keyboard } = require('grammy');
 const db = require('./db');
-const { formatPost } = require('./format');
+const { CATEGORIES, formatPost } = require('./format');
 
 const HOUR_LIMIT = 10;
 const BTN_SEND = '📨 Отправить анонимку';
@@ -58,17 +58,26 @@ function checkLimit(userId) {
 }
 
 async function showConfirmation(ctx) {
-  const { text, mediaFileId, mediaType } = ctx.session;
+  const { text, mediaFileId, mediaType, category } = ctx.session;
   const postText = formatPost(text);
   const kb = confirmKeyboard();
+  const cat = CATEGORIES[category];
+  const catLine = cat ? `Категория: ${cat.emoji} ${cat.name}\n\n` : '';
 
   if (mediaFileId) {
-    const sendMedia = mediaType === 'photo' ? ctx.replyWithPhoto.bind(ctx) : ctx.replyWithVideo.bind(ctx);
+    let sendMedia;
+    if (mediaType === 'photo') {
+      sendMedia = ctx.replyWithPhoto.bind(ctx);
+    } else if (mediaType === 'animation') {
+      sendMedia = ctx.replyWithAnimation.bind(ctx);
+    } else {
+      sendMedia = ctx.replyWithVideo.bind(ctx);
+    }
     await sendMedia(mediaFileId, { caption: postText, parse_mode: 'HTML' });
-    await ctx.reply('Всё верно?', { reply_markup: kb });
+    await ctx.reply(`${catLine}Всё верно?`, { reply_markup: kb });
   } else {
     await ctx.reply(
-      `Проверь свою анонимку:\n\n${postText}\n\nВсё верно?`,
+      `${catLine}Проверь свою анонимку:\n\n${postText}\n\nВсё верно?`,
       { parse_mode: 'HTML', reply_markup: kb },
     );
   }
@@ -108,6 +117,14 @@ function setupUserFlow(composer) {
     );
   });
 
+  // /cancel — сбросить флоу в любой момент
+  composer.command('cancel', async (ctx) => {
+    resetSession(ctx);
+    await ctx.reply('Отменено. Нажми кнопку ниже чтобы попробовать снова 👇', {
+      reply_markup: MAIN_KB,
+    });
+  });
+
   // Выбор категории
   composer.callbackQuery(/^cat:(.+)$/, async (ctx) => {
     if (ctx.session.step !== 'category') {
@@ -125,7 +142,7 @@ function setupUserFlow(composer) {
     if (ctx.session.step !== 'media_prompt') { await ctx.answerCallbackQuery(); return; }
     ctx.session.step = 'media_wait';
     await ctx.answerCallbackQuery();
-    await ctx.reply('Отправь фото или видео (только один файл):');
+    await ctx.reply('Отправь фото, GIF или видео (только один файл):');
   });
 
   // Медиа — пропустить
@@ -218,7 +235,7 @@ function setupUserFlow(composer) {
       }
       ctx.session.text = text;
       ctx.session.step = 'media_prompt';
-      await ctx.reply('Хочешь прикрепить фото или видео?', {
+      await ctx.reply('Хочешь прикрепить фото, GIF или видео?', {
         reply_markup: new InlineKeyboard()
           .text('📎 Прикрепить', 'media_yes')
           .text('➡️ Без медиа', 'media_no'),
@@ -244,6 +261,15 @@ function setupUserFlow(composer) {
     if (ctx.session.step !== 'media_wait') return;
     ctx.session.mediaFileId = ctx.message.video.file_id;
     ctx.session.mediaType = 'video';
+    ctx.session.step = 'confirm';
+    await showConfirmation(ctx);
+  });
+
+  // GIF / анимация
+  composer.on('message:animation', async (ctx) => {
+    if (ctx.session.step !== 'media_wait') return;
+    ctx.session.mediaFileId = ctx.message.animation.file_id;
+    ctx.session.mediaType = 'animation';
     ctx.session.step = 'confirm';
     await showConfirmation(ctx);
   });

@@ -1,7 +1,9 @@
 require('dotenv').config();
 const { Bot, session } = require('grammy');
+const { limit } = require('@grammyjs/ratelimiter');
 const { setupUserFlow } = require('./userFlow');
 const { setupModFlow }  = require('./modFlow');
+const { sessionStorage } = require('./db');
 
 // ─── Validate env ────────────────────────────────────────────────────────────
 
@@ -17,6 +19,10 @@ for (const key of requiredEnv) {
 
 const bot = new Bot(process.env.BOT_TOKEN);
 
+// Flood protection: не более 1 сообщения в секунду на пользователя
+bot.use(limit());
+
+// SQLite-backed session storage — переживает рестарты бота
 bot.use(session({
   initial: () => ({
     // User flow state
@@ -29,6 +35,7 @@ bot.use(session({
     awaitingRejectFor: null,  // submission id
     awaitingBanFor:    null,  // { subId, userId }
   }),
+  storage: sessionStorage,
 }));
 
 // ─── Route by chat type ──────────────────────────────────────────────────────
@@ -49,6 +56,17 @@ setupModFlow(modBot);
 bot.catch((err) => {
   console.error(`Unhandled error for update ${err.ctx?.update?.update_id}:`, err.error);
 });
+
+// ─── Graceful shutdown ───────────────────────────────────────────────────────
+
+async function shutdown(signal) {
+  console.log(`${signal} received, stopping bot…`);
+  await bot.stop();
+  process.exit(0);
+}
+
+process.once('SIGINT',  () => shutdown('SIGINT'));
+process.once('SIGTERM', () => shutdown('SIGTERM'));
 
 // ─── Start ───────────────────────────────────────────────────────────────────
 

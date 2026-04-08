@@ -36,19 +36,39 @@ db.exec(`
     total_rejected  INTEGER NOT NULL DEFAULT 0,
     total_postponed INTEGER NOT NULL DEFAULT 0
   );
+
+  CREATE TABLE IF NOT EXISTS sessions (
+    key  TEXT PRIMARY KEY,
+    data TEXT NOT NULL
+  );
 `);
 
 db.exec('INSERT OR IGNORE INTO stats (id) VALUES (1)');
 
+// ─── Session storage adapter (SQLite-backed, survives restarts) ─────────────
+
+const _sessionRead   = db.prepare('SELECT data FROM sessions WHERE key = ?');
+const _sessionWrite  = db.prepare('INSERT OR REPLACE INTO sessions (key, data) VALUES (?, ?)');
+const _sessionDelete = db.prepare('DELETE FROM sessions WHERE key = ?');
+
+const sessionStorage = {
+  read:   (key) => { const row = _sessionRead.get(key); return row ? JSON.parse(row.data) : undefined; },
+  write:  (key, value) => _sessionWrite.run(key, JSON.stringify(value)),
+  delete: (key) => _sessionDelete.run(key),
+};
+
 module.exports = {
+  sessionStorage,
+
   // ─── Users ────────────────────────────────────────────────────────────────
-  getUser:        db.prepare('SELECT * FROM users WHERE user_id = ?'),
-  createUser:     db.prepare('INSERT OR IGNORE INTO users (user_id) VALUES (?)'),
-  resetUserHour:  db.prepare('UPDATE users SET submissions_count_hour = 0, hour_reset_at = ? WHERE user_id = ?'),
-  incrementCount: db.prepare('UPDATE users SET submissions_count_hour = submissions_count_hour + 1 WHERE user_id = ?'),
-  banUser:        db.prepare('UPDATE users SET is_banned = 1, ban_reason = ? WHERE user_id = ?'),
-  unbanUser:      db.prepare('UPDATE users SET is_banned = 0, ban_reason = NULL WHERE user_id = ?'),
-  getBannedUsers: db.prepare('SELECT user_id, ban_reason FROM users WHERE is_banned = 1'),
+  getUser:         db.prepare('SELECT * FROM users WHERE user_id = ?'),
+  createUser:      db.prepare('INSERT OR IGNORE INTO users (user_id) VALUES (?)'),
+  resetUserHour:   db.prepare('UPDATE users SET submissions_count_hour = 0, hour_reset_at = ? WHERE user_id = ?'),
+  incrementCount:  db.prepare('UPDATE users SET submissions_count_hour = submissions_count_hour + 1 WHERE user_id = ?'),
+  banUser:         db.prepare('UPDATE users SET is_banned = 1, ban_reason = ? WHERE user_id = ?'),
+  unbanUser:       db.prepare('UPDATE users SET is_banned = 0, ban_reason = NULL WHERE user_id = ?'),
+  getBannedUsers:  db.prepare('SELECT user_id, ban_reason FROM users WHERE is_banned = 1'),
+  getBannedCount:  db.prepare('SELECT COUNT(*) AS cnt FROM users WHERE is_banned = 1'),
 
   // ─── Submissions ──────────────────────────────────────────────────────────
   createSubmission: db.prepare(

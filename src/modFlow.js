@@ -5,6 +5,15 @@ const { CATEGORIES, formatModHeader, formatPost } = require('./format');
 const MOD_CHAT_ID = () => process.env.MOD_CHAT_ID;
 const CHANNEL_ID  = () => process.env.CHANNEL_ID;
 
+// ─── Quick reject reasons ────────────────────────────────────────────────────
+
+const REJECT_REASONS = [
+  'Спам или реклама',
+  'Оскорбления / нецензурная лексика',
+  'Не по теме канала',
+  'Дублирует другую анонимку',
+];
+
 // ─── Keyboards ──────────────────────────────────────────────────────────────
 
 function modKeyboard(subId, userId) {
@@ -18,6 +27,15 @@ function postponedKeyboard(subId, userId) {
     .text('✅ Опубликовать',       `approve:${subId}`).text('❌ Отклонить', `reject:${subId}`).row()
     .text('🚫 Забанить',           `ban:${subId}:${userId}`)
     .text('🔄 Вернуть в очередь', `return:${subId}`);
+}
+
+function rejectReasonsKeyboard(subId) {
+  const kb = new InlineKeyboard();
+  REJECT_REASONS.forEach((reason, i) => {
+    kb.text(reason, `rr:${subId}:${i}`).row();
+  });
+  kb.text('✏️ Другая причина', `rrc:${subId}`);
+  return kb;
 }
 
 const emptyKeyboard = new InlineKeyboard();
@@ -59,30 +77,50 @@ async function editModMsg(api, submission, newText, keyboard) {
 
 /**
  * Sends a new submission to the mod chat.
- * Called after the user confirms submission.
+ * Retries once after 2s on failure.
  */
-async function sendToModChat(api, submissionId) {
+async function sendToModChat(api, submissionId, attempt = 1) {
   const sub = db.getSubmission.get(submissionId);
   if (!sub) return;
 
   const text = formatModHeader(sub);
   const kb   = modKeyboard(sub.id, sub.user_id);
 
-  let msg;
-  if (sub.media_file_id) {
-    const send = sub.media_type === 'photo'
-      ? api.sendPhoto.bind(api)
-      : api.sendVideo.bind(api);
-    msg = await send(MOD_CHAT_ID(), sub.media_file_id, {
-      caption: text, parse_mode: 'HTML', reply_markup: kb,
-    });
-  } else {
-    msg = await api.sendMessage(MOD_CHAT_ID(), text, {
-      parse_mode: 'HTML', reply_markup: kb,
-    });
+  try {
+    let msg;
+    if (sub.media_file_id) {
+      let send;
+      if (sub.media_type === 'photo') {
+        send = api.sendPhoto.bind(api);
+      } else if (sub.media_type === 'animation') {
+        send = api.sendAnimation.bind(api);
+      } else {
+        send = api.sendVideo.bind(api);
+      }
+      msg = await send(MOD_CHAT_ID(), sub.media_file_id, {
+        caption: text, parse_mode: 'HTML', reply_markup: kb,
+      });
+    } else {
+      msg = await api.sendMessage(MOD_CHAT_ID(), text, {
+        parse_mode: 'HTML', reply_markup: kb,
+      });
+    }
+    db.setModMsgId.run(msg.message_id, sub.id);
+  } catch (err) {
+    if (attempt < 2) {
+      console.warn(`sendToModChat attempt ${attempt} failed, retrying…`, err.message);
+      await new Promise((r) => setTimeout(r, 2000));
+      return sendToModChat(api, submissionId, attempt + 1);
+    }
+    // После двух попыток — предупреждение в мод-чат
+    try {
+      await api.sendMessage(
+        MOD_CHAT_ID(),
+        `⚠️ Не удалось переслать анонимку #${submissionId} в чат модераторов.\nОшибка: ${err.message}`,
+      );
+    } catch (_) { /* ignore */ }
+    throw err;
   }
-
-  db.setModMsgId.run(msg.message_id, sub.id);
 }
 
 // ─── Notify user ─────────────────────────────────────────────────────────────
@@ -102,9 +140,14 @@ async function publishToChannel(api, submission) {
   const noPreview = { link_preview_options: { is_disabled: true } };
 
   if (submission.media_file_id) {
-    const send = submission.media_type === 'photo'
-      ? api.sendPhoto.bind(api)
-      : api.sendVideo.bind(api);
+    let send;
+    if (submission.media_type === 'photo') {
+      send = api.sendPhoto.bind(api);
+    } else if (submission.media_type === 'animation') {
+      send = api.sendAnimation.bind(api);
+    } else {
+      send = api.sendVideo.bind(api);
+    }
     await send(CHANNEL_ID(), submission.media_file_id, {
       caption: postText, parse_mode: 'HTML', ...noPreview,
     });
@@ -115,18 +158,41 @@ async function publishToChannel(api, submission) {
   }
 }
 
+// ─── Reject helper ────────────────────────────────────────────────────────────
+
+async function doReject(api, ctx, subId, reason) {
+  const sub = db.getSubmission.get(subId);
+  if (!sub) {
+    await ctx.reply('Анонимка не найдена.');
+    return;
+  }
+
+  db.updateStatus.run('rejected', reason, subId);
+  db.incRejected.run();
+
+  await notifyUser(api, sub.user_id, `❌ Твоя анонимка отклонена.\nПричина: ${reason}`);
+
+  const name    = modName(ctx);
+  const newText = `${formatModHeader(sub)}\n\n❌ Отклонено ${name}: ${reason}`;
+  await editModMsg(api, sub, newText, null);
+
+  await ctx.reply(`✅ Анонимка #${subId} отклонена.`);
+}
+
 // ─── Setup ──────────────────────────────────────────────────────────────────
 
 function setupModFlow(composer) {
   // /stats
   composer.command('stats', async (ctx) => {
     const s = db.getStats.get();
+    const banned = db.getBannedCount.get().cnt;
     await ctx.reply(
       `📊 Статистика бота:\n\n` +
       `📨 Всего подано: ${s.total_submitted}\n` +
       `✅ Опубликовано: ${s.total_approved}\n` +
       `❌ Отклонено: ${s.total_rejected}\n` +
-      `⏸ Отложено: ${s.total_postponed}`,
+      `⏸ Отложено: ${s.total_postponed}\n` +
+      `🚫 В бане: ${banned}`,
     );
   });
 
@@ -150,6 +216,50 @@ function setupModFlow(composer) {
     }
     const text = list.map((u) => `• ${u.user_id} — ${u.ban_reason || 'без причины'}`).join('\n');
     await ctx.reply(`🚫 Заблокированные пользователи:\n\n${text}`);
+  });
+
+  // /get <id> — получить анонимку по ID
+  composer.command('get', async (ctx) => {
+    const subId = parseInt(ctx.match, 10);
+    if (!subId) {
+      await ctx.reply('Использование: /get <id>');
+      return;
+    }
+    const sub = db.getSubmission.get(subId);
+    if (!sub) {
+      await ctx.reply(`Анонимка #${subId} не найдена.`);
+      return;
+    }
+
+    const text = formatModHeader(sub);
+    let kb;
+    if (sub.status === 'pending')    kb = modKeyboard(sub.id, sub.user_id);
+    else if (sub.status === 'postponed') kb = postponedKeyboard(sub.id, sub.user_id);
+    else                             kb = emptyKeyboard;
+
+    const statusLabel = { pending: 'В очереди', approved: '✅ Опубликована', rejected: '❌ Отклонена', postponed: '⏸ Отложена' }[sub.status] ?? sub.status;
+
+    const fullText = `${text}\n\nСтатус: ${statusLabel}`;
+
+    if (sub.media_file_id) {
+      let send;
+      if (sub.media_type === 'photo') {
+        send = ctx.replyWithPhoto.bind(ctx);
+      } else if (sub.media_type === 'animation') {
+        send = ctx.replyWithAnimation.bind(ctx);
+      } else {
+        send = ctx.replyWithVideo.bind(ctx);
+      }
+      const msg = await send(sub.media_file_id, { caption: fullText, parse_mode: 'HTML', reply_markup: kb });
+      if (sub.status === 'pending' || sub.status === 'postponed') {
+        db.setModMsgId.run(msg.message_id, sub.id);
+      }
+    } else {
+      const msg = await ctx.reply(fullText, { parse_mode: 'HTML', reply_markup: kb });
+      if (sub.status === 'pending' || sub.status === 'postponed') {
+        db.setModMsgId.run(msg.message_id, sub.id);
+      }
+    }
   });
 
   // ✅ Опубликовать
@@ -190,8 +300,12 @@ function setupModFlow(composer) {
 
     await ctx.answerCallbackQuery('Отложено');
 
+    // Считаем отложенные только один раз (не при повторном откладывании)
+    if (sub.status !== 'postponed') db.incPostponed.run();
+
     db.updateStatus.run('postponed', null, subId);
-    db.incPostponed.run();
+
+    await notifyUser(ctx.api, sub.user_id, '⏸ Твоя анонимка отложена модераторами. Мы вернёмся к ней позже.');
 
     const name    = modName(ctx);
     const newText = `${formatModHeader(sub)}\n\n⏸ Отложено ${name}`;
@@ -216,8 +330,36 @@ function setupModFlow(composer) {
     await editModMsg(ctx.api, sub, newText, kb);
   });
 
-  // ❌ Отклонить — запрос причины
+  // ❌ Отклонить — показать быстрые причины
   composer.callbackQuery(/^reject:(\d+)$/, async (ctx) => {
+    const subId = Number(ctx.match[1]);
+    const sub   = db.getSubmission.get(subId);
+
+    if (!sub) { await ctx.answerCallbackQuery('Анонимка не найдена'); return; }
+
+    await ctx.answerCallbackQuery();
+    ctx.session.awaitingRejectFor = null;
+    ctx.session.awaitingBanFor   = null;
+    await ctx.reply(
+      `Выбери причину отклонения анонимки #${subId}:`,
+      { reply_markup: rejectReasonsKeyboard(subId) },
+    );
+  });
+
+  // ❌ Быстрая причина отклонения
+  composer.callbackQuery(/^rr:(\d+):(\d+)$/, async (ctx) => {
+    const subId      = Number(ctx.match[1]);
+    const reasonIdx  = Number(ctx.match[2]);
+    const reason     = REJECT_REASONS[reasonIdx];
+
+    if (!reason) { await ctx.answerCallbackQuery('Неверный индекс'); return; }
+
+    await ctx.answerCallbackQuery('Отклоняем…');
+    await doReject(ctx.api, ctx, subId, reason);
+  });
+
+  // ❌ Своя причина отклонения — запросить текст
+  composer.callbackQuery(/^rrc:(\d+)$/, async (ctx) => {
     const subId = Number(ctx.match[1]);
     const sub   = db.getSubmission.get(subId);
 
@@ -253,19 +395,7 @@ function setupModFlow(composer) {
       const reason = ctx.message.text;
       ctx.session.awaitingRejectFor = null;
 
-      const sub = db.getSubmission.get(subId);
-      if (!sub) { await ctx.reply('Анонимка не найдена.'); return; }
-
-      db.updateStatus.run('rejected', reason, subId);
-      db.incRejected.run();
-
-      await notifyUser(ctx.api, sub.user_id, `❌ Твоя анонимка отклонена.\nПричина: ${reason}`);
-
-      const name    = modName(ctx);
-      const newText = `${formatModHeader(sub)}\n\n❌ Отклонено ${name}: ${reason}`;
-      await editModMsg(ctx.api, sub, newText, null);
-
-      await ctx.reply(`✅ Анонимка #${subId} отклонена.`);
+      await doReject(ctx.api, ctx, subId, reason);
       return;
     }
 
