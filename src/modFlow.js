@@ -205,6 +205,7 @@ function setupModFlow(composer) {
     }
     db.unbanUser.run(userId);
     await ctx.reply(`✅ Пользователь ${userId} разбанен.`);
+    await notifyUser(ctx.api, userId, '✅ Твой бан снят. Теперь ты снова можешь отправлять анонимки.');
   });
 
   // /bans

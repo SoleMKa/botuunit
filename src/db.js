@@ -74,9 +74,21 @@ module.exports = {
   createSubmission: db.prepare(
     'INSERT INTO submissions (user_id, category, text, media_file_id, media_type) VALUES (?, ?, ?, ?, ?)'
   ),
-  getSubmission: db.prepare('SELECT * FROM submissions WHERE id = ?'),
-  updateStatus:  db.prepare('UPDATE submissions SET status = ?, reject_reason = ? WHERE id = ?'),
-  setModMsgId:   db.prepare('UPDATE submissions SET mod_message_id = ? WHERE id = ?'),
+  getSubmission:    db.prepare('SELECT * FROM submissions WHERE id = ?'),
+  updateStatus:     db.prepare('UPDATE submissions SET status = ?, reject_reason = ? WHERE id = ?'),
+  setModMsgId:      db.prepare('UPDATE submissions SET mod_message_id = ? WHERE id = ?'),
+  getUserStats:     db.prepare(`
+    SELECT
+      COUNT(*) AS total,
+      SUM(CASE WHEN status = 'approved'  THEN 1 ELSE 0 END) AS approved,
+      SUM(CASE WHEN status = 'rejected'  THEN 1 ELSE 0 END) AS rejected,
+      SUM(CASE WHEN status = 'pending'   THEN 1 ELSE 0 END) AS pending,
+      SUM(CASE WHEN status = 'postponed' THEN 1 ELSE 0 END) AS postponed
+    FROM submissions WHERE user_id = ?
+  `),
+  findDuplicateSubmission: db.prepare(
+    "SELECT id FROM submissions WHERE user_id = ? AND text = ? AND created_at > datetime('now', '-1 hour') LIMIT 1"
+  ),
 
   // ─── Stats ────────────────────────────────────────────────────────────────
   getStats:     db.prepare('SELECT * FROM stats WHERE id = 1'),
@@ -84,4 +96,13 @@ module.exports = {
   incApproved:  db.prepare('UPDATE stats SET total_approved   = total_approved   + 1 WHERE id = 1'),
   incRejected:  db.prepare('UPDATE stats SET total_rejected   = total_rejected   + 1 WHERE id = 1'),
   incPostponed: db.prepare('UPDATE stats SET total_postponed  = total_postponed  + 1 WHERE id = 1'),
+
+  // ─── Session maintenance ──────────────────────────────────────────────────
+  // Удаляет «пустые» сессии (пользователь не в середине флоу)
+  cleanIdleSessions: db.prepare(`
+    DELETE FROM sessions
+    WHERE json_extract(data, '$.step')              IS NULL
+      AND json_extract(data, '$.awaitingRejectFor') IS NULL
+      AND json_extract(data, '$.awaitingBanFor')    IS NULL
+  `),
 };

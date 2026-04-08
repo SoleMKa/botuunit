@@ -117,12 +117,43 @@ function setupUserFlow(composer) {
     );
   });
 
+  // /help
+  composer.command('help', async (ctx) => {
+    await ctx.reply(
+      '📖 Команды бота:\n\n' +
+      `${BTN_SEND} — отправить анонимку\n` +
+      '/cancel — отменить текущую анонимку\n' +
+      '/mystats — моя статистика\n' +
+      '/start — приветствие',
+      { reply_markup: MAIN_KB },
+    );
+  });
+
   // /cancel — сбросить флоу в любой момент
   composer.command('cancel', async (ctx) => {
     resetSession(ctx);
     await ctx.reply('Отменено. Нажми кнопку ниже чтобы попробовать снова 👇', {
       reply_markup: MAIN_KB,
     });
+  });
+
+  // /mystats — статистика пользователя
+  composer.command('mystats', async (ctx) => {
+    const userId = ctx.from.id;
+    db.createUser.run(userId);
+    const s = db.getUserStats.get(userId);
+    if (!s || s.total === 0) {
+      await ctx.reply('У тебя пока нет анонимок.', { reply_markup: MAIN_KB });
+      return;
+    }
+    await ctx.reply(
+      '📊 Твоя статистика:\n\n' +
+      `📨 Всего отправлено: ${s.total}\n` +
+      `✅ Опубликовано: ${s.approved}\n` +
+      `⏸ На рассмотрении: ${Number(s.pending) + Number(s.postponed)}\n` +
+      `❌ Отклонено: ${s.rejected}`,
+      { reply_markup: MAIN_KB },
+    );
   });
 
   // Выбор категории
@@ -173,6 +204,16 @@ function setupUserFlow(composer) {
       resetSession(ctx);
       await ctx.reply(
         `⏳ Ты уже отправил 10 анонимок за этот час.\nПопробуй через ${check.minutesLeft} минут.`,
+        { reply_markup: MAIN_KB },
+      );
+      return;
+    }
+
+    // Антидубль: та же анонимка от того же юзера за последний час
+    if (db.findDuplicateSubmission.get(userId, text)) {
+      resetSession(ctx);
+      await ctx.reply(
+        '🔁 Ты уже отправлял точно такую же анонимку за последний час.\nПопробуй изменить текст.',
         { reply_markup: MAIN_KB },
       );
       return;

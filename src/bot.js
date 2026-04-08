@@ -3,7 +3,7 @@ const { Bot, session } = require('grammy');
 const { limit } = require('@grammyjs/ratelimiter');
 const { setupUserFlow } = require('./userFlow');
 const { setupModFlow }  = require('./modFlow');
-const { sessionStorage } = require('./db');
+const { sessionStorage, cleanIdleSessions } = require('./db');
 
 // ─── Validate env ────────────────────────────────────────────────────────────
 
@@ -56,6 +56,16 @@ setupModFlow(modBot);
 bot.catch((err) => {
   console.error(`Unhandled error for update ${err.ctx?.update?.update_id}:`, err.error);
 });
+
+// ─── Session cleanup (каждый час удаляем пустые сессии) ─────────────────────
+
+setInterval(() => {
+  try {
+    cleanIdleSessions.run();
+  } catch (err) {
+    console.error('Session cleanup error:', err.message);
+  }
+}, 60 * 60 * 1000);
 
 // ─── Graceful shutdown ───────────────────────────────────────────────────────
 
