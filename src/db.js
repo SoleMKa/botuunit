@@ -10,7 +10,7 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS submissions (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id        INTEGER  NOT NULL,
-    category       TEXT     NOT NULL,
+    category       TEXT     NOT NULL DEFAULT '',
     text           TEXT     NOT NULL,
     media_file_id  TEXT,
     media_type     TEXT,
@@ -72,7 +72,7 @@ module.exports = {
 
   // ─── Submissions ──────────────────────────────────────────────────────────
   createSubmission: db.prepare(
-    'INSERT INTO submissions (user_id, category, text, media_file_id, media_type) VALUES (?, ?, ?, ?, ?)'
+    'INSERT INTO submissions (user_id, text, media_file_id, media_type) VALUES (?, ?, ?, ?)'
   ),
   getSubmission:    db.prepare('SELECT * FROM submissions WHERE id = ?'),
   updateStatus:     db.prepare('UPDATE submissions SET status = ?, reject_reason = ? WHERE id = ?'),

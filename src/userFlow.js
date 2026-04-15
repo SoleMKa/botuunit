@@ -171,7 +171,7 @@ function setupUserFlow(composer) {
     await ctx.answerCallbackQuery();
 
     const userId = ctx.from.id;
-    const { category, text, mediaFileId, mediaType } = ctx.session;
+    const { text, mediaFileId, mediaType } = ctx.session;
 
     const check = checkLimit(userId);
     if (check.banned) {
@@ -200,7 +200,7 @@ function setupUserFlow(composer) {
 
     db.incrementCount.run(userId);
     const { lastInsertRowid: submissionId } = db.createSubmission.run(
-      userId, category, text, mediaFileId ?? null, mediaType ?? null,
+      userId, text, mediaFileId ?? null, mediaType ?? null,
     );
     db.incSubmitted.run();
 
