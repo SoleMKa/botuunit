@@ -1,10 +1,3 @@
-const CATEGORIES = {
-  love:      { emoji: '💌', name: 'Признание' },
-  humor:     { emoji: '😂', name: 'Юмор' },
-  question:  { emoji: '❓', name: 'Вопрос' },
-  complaint: { emoji: '📢', name: 'Жалоба' },
-};
-
 /**
  * Escapes special HTML characters to prevent injection in parse_mode: 'HTML'.
  */
@@ -30,17 +23,15 @@ function formatPost(text) {
  * Builds the moderator chat message header for a submission.
  */
 function formatModHeader(submission) {
-  const cat = CATEGORIES[submission.category];
   const postText = formatPost(submission.text);
   const createdAt = new Date(submission.created_at).toLocaleString('ru-RU', {
     timeZone: 'Asia/Yekaterinburg',
   });
   return (
-    `📨 Новая анонимка #${submission.id}\n` +
-    `Категория: ${cat.emoji} ${cat.name}\n\n` +
+    `📨 Новая анонимка #${submission.id}\n\n` +
     `${postText}\n\n` +
     `⏰ ${createdAt}`
   );
 }
 
-module.exports = { CATEGORIES, escapeHtml, formatPost, formatModHeader };
+module.exports = { escapeHtml, formatPost, formatModHeader };

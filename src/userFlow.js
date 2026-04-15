@@ -1,6 +1,6 @@
 const { InlineKeyboard, Keyboard } = require('grammy');
 const db = require('./db');
-const { CATEGORIES, formatPost } = require('./format');
+const { formatPost } = require('./format');
 
 const HOUR_LIMIT = 10;
 const BTN_SEND = '📨 Отправить анонимку';
@@ -9,12 +9,6 @@ const BTN_SEND = '📨 Отправить анонимку';
 const MAIN_KB = new Keyboard().text(BTN_SEND).resized().persistent();
 
 // ─── Keyboards ──────────────────────────────────────────────────────────────
-
-function categoryKeyboard() {
-  return new InlineKeyboard()
-    .text('💌 Признание', 'cat:love').text('😂 Юмор', 'cat:humor').row()
-    .text('❓ Вопрос', 'cat:question').text('📢 Жалоба', 'cat:complaint');
-}
 
 function confirmKeyboard() {
   return new InlineKeyboard()
@@ -58,11 +52,9 @@ function checkLimit(userId) {
 }
 
 async function showConfirmation(ctx) {
-  const { text, mediaFileId, mediaType, category } = ctx.session;
+  const { text, mediaFileId, mediaType } = ctx.session;
   const postText = formatPost(text);
   const kb = confirmKeyboard();
-  const cat = CATEGORIES[category];
-  const catLine = cat ? `Категория: ${cat.emoji} ${cat.name}\n\n` : '';
 
   if (mediaFileId) {
     let sendMedia;
@@ -74,10 +66,10 @@ async function showConfirmation(ctx) {
       sendMedia = ctx.replyWithVideo.bind(ctx);
     }
     await sendMedia(mediaFileId, { caption: postText, parse_mode: 'HTML' });
-    await ctx.reply(`${catLine}Всё верно?`, { reply_markup: kb });
+    await ctx.reply('Всё верно?', { reply_markup: kb });
   } else {
     await ctx.reply(
-      `${catLine}Проверь свою анонимку:\n\n${postText}\n\nВсё верно?`,
+      `Проверь свою анонимку:\n\n${postText}\n\nВсё верно?`,
       { parse_mode: 'HTML', reply_markup: kb },
     );
   }
@@ -97,8 +89,8 @@ async function startSendFlow(ctx) {
   }
 
   resetSession(ctx);
-  ctx.session.step = 'category';
-  await ctx.reply('Выбери категорию:', { reply_markup: categoryKeyboard() });
+  ctx.session.step = 'text';
+  await ctx.reply('Напиши текст своей анонимки (максимум 300 символов):');
 }
 
 // ─── Setup ──────────────────────────────────────────────────────────────────
@@ -109,8 +101,7 @@ function setupUserFlow(composer) {
     resetSession(ctx);
     await ctx.reply(
       '👋 Привет! Это бот канала Признавашки НФ УУНИТ.\n\n' +
-      'Здесь ты можешь анонимно отправить:\n' +
-      '💌 Признание\n😂 Юмор\n❓ Вопрос\n📢 Жалобу\n\n' +
+      'Здесь ты можешь анонимно отправить признание, юмор, вопрос или жалобу.\n\n' +
       'Никто не узнает кто ты — твой аккаунт скрыт полностью.\n\n' +
       'Нажми кнопку ниже чтобы отправить анонимку 👇',
       { reply_markup: MAIN_KB },
@@ -154,18 +145,6 @@ function setupUserFlow(composer) {
       `❌ Отклонено: ${s.rejected}`,
       { reply_markup: MAIN_KB },
     );
-  });
-
-  // Выбор категории
-  composer.callbackQuery(/^cat:(.+)$/, async (ctx) => {
-    if (ctx.session.step !== 'category') {
-      await ctx.answerCallbackQuery();
-      return;
-    }
-    ctx.session.category = ctx.match[1];
-    ctx.session.step = 'text';
-    await ctx.answerCallbackQuery();
-    await ctx.reply('Напиши текст своей анонимки (максимум 300 символов):');
   });
 
   // Медиа — прикрепить
@@ -239,12 +218,11 @@ function setupUserFlow(composer) {
   // Подтверждение — изменить
   composer.callbackQuery('edit', async (ctx) => {
     await ctx.answerCallbackQuery();
-    ctx.session.step = 'category';
-    ctx.session.category = null;
+    ctx.session.step = 'text';
     ctx.session.text = null;
     ctx.session.mediaFileId = null;
     ctx.session.mediaType = null;
-    await ctx.reply('Выбери категорию:', { reply_markup: categoryKeyboard() });
+    await ctx.reply('Напиши текст своей анонимки (максимум 300 символов):');
   });
 
   // Подтверждение — отмена

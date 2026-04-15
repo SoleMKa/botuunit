@@ -1,6 +1,6 @@
 const { InlineKeyboard } = require('grammy');
 const db = require('./db');
-const { CATEGORIES, formatModHeader, formatPost } = require('./format');
+const { formatModHeader, formatPost } = require('./format');
 
 const MOD_CHAT_ID = () => process.env.MOD_CHAT_ID;
 const CHANNEL_ID  = () => process.env.CHANNEL_ID;
