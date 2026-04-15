@@ -82,8 +82,7 @@ module.exports = {
       COUNT(*) AS total,
       SUM(CASE WHEN status = 'approved'  THEN 1 ELSE 0 END) AS approved,
       SUM(CASE WHEN status = 'rejected'  THEN 1 ELSE 0 END) AS rejected,
-      SUM(CASE WHEN status = 'pending'   THEN 1 ELSE 0 END) AS pending,
-      SUM(CASE WHEN status = 'postponed' THEN 1 ELSE 0 END) AS postponed
+      SUM(CASE WHEN status = 'pending'   THEN 1 ELSE 0 END) AS pending
     FROM submissions WHERE user_id = ?
   `),
   findDuplicateSubmission: db.prepare(
@@ -95,7 +94,6 @@ module.exports = {
   incSubmitted: db.prepare('UPDATE stats SET total_submitted  = total_submitted  + 1 WHERE id = 1'),
   incApproved:  db.prepare('UPDATE stats SET total_approved   = total_approved   + 1 WHERE id = 1'),
   incRejected:  db.prepare('UPDATE stats SET total_rejected   = total_rejected   + 1 WHERE id = 1'),
-  incPostponed: db.prepare('UPDATE stats SET total_postponed  = total_postponed  + 1 WHERE id = 1'),
 
   // ─── Session maintenance ──────────────────────────────────────────────────
   // Удаляет «пустые» сессии (пользователь не в середине флоу)

@@ -18,15 +18,8 @@ const REJECT_REASONS = [
 
 function modKeyboard(subId, userId) {
   return new InlineKeyboard()
-    .text('✅ Опубликовать', `approve:${subId}`).text('⏸ Отложить', `postpone:${subId}`).row()
-    .text('❌ Отклонить',    `reject:${subId}`). text('🚫 Забанить',  `ban:${subId}:${userId}`);
-}
-
-function postponedKeyboard(subId, userId) {
-  return new InlineKeyboard()
-    .text('✅ Опубликовать',       `approve:${subId}`).text('❌ Отклонить', `reject:${subId}`).row()
-    .text('🚫 Забанить',           `ban:${subId}:${userId}`)
-    .text('🔄 Вернуть в очередь', `return:${subId}`);
+    .text('✅ Опубликовать', `approve:${subId}`).text('❌ Отклонить', `reject:${subId}`).row()
+    .text('🚫 Забанить', `ban:${subId}:${userId}`);
 }
 
 function rejectReasonsKeyboard(subId) {
@@ -219,7 +212,6 @@ function setupModFlow(composer) {
       `📨 Всего подано: ${s.total_submitted}\n` +
       `✅ Опубликовано: ${s.total_approved}\n` +
       `❌ Отклонено: ${s.total_rejected}\n` +
-      `⏸ Отложено: ${s.total_postponed}\n` +
       `🚫 В бане: ${banned}`,
     );
   });
@@ -261,12 +253,9 @@ function setupModFlow(composer) {
     }
 
     const text = formatModHeader(sub);
-    let kb;
-    if (sub.status === 'pending')    kb = modKeyboard(sub.id, sub.user_id);
-    else if (sub.status === 'postponed') kb = postponedKeyboard(sub.id, sub.user_id);
-    else                             kb = emptyKeyboard;
+    const kb = sub.status === 'pending' ? modKeyboard(sub.id, sub.user_id) : emptyKeyboard;
 
-    const statusLabel = { pending: 'В очереди', approved: '✅ Опубликована', rejected: '❌ Отклонена', postponed: '⏸ Отложена' }[sub.status] ?? sub.status;
+    const statusLabel = { pending: 'В очереди', approved: '✅ Опубликована', rejected: '❌ Отклонена' }[sub.status] ?? sub.status;
 
     const fullText = `${text}\n\nСтатус: ${statusLabel}`;
 
@@ -320,45 +309,6 @@ function setupModFlow(composer) {
     ctx.session.awaitingCommentFor = null;
     await ctx.answerCallbackQuery('Публикуем…');
     await doApprove(ctx.api, ctx, sub, null);
-  });
-
-  // ⏸ Отложить
-  composer.callbackQuery(/^postpone:(\d+)$/, async (ctx) => {
-    const subId = Number(ctx.match[1]);
-    const sub   = db.getSubmission.get(subId);
-
-    if (!sub) { await ctx.answerCallbackQuery('Анонимка не найдена'); return; }
-
-    await ctx.answerCallbackQuery('Отложено');
-
-    // Считаем отложенные только один раз (не при повторном откладывании)
-    if (sub.status !== 'postponed') db.incPostponed.run();
-
-    db.updateStatus.run('postponed', null, subId);
-
-    await notifyUser(ctx.api, sub.user_id, '⏸ Твоя анонимка отложена модераторами. Мы вернёмся к ней позже.');
-
-    const name    = modName(ctx);
-    const newText = `${formatModHeader(sub)}\n\n⏸ Отложено ${name}`;
-    const kb      = postponedKeyboard(subId, sub.user_id);
-    await editModMsg(ctx.api, sub, newText, kb);
-  });
-
-  // 🔄 Вернуть в очередь
-  composer.callbackQuery(/^return:(\d+)$/, async (ctx) => {
-    const subId = Number(ctx.match[1]);
-    const sub   = db.getSubmission.get(subId);
-
-    if (!sub) { await ctx.answerCallbackQuery('Анонимка не найдена'); return; }
-
-    await ctx.answerCallbackQuery('Возвращено в очередь');
-
-    db.updateStatus.run('pending', null, subId);
-
-    const name    = modName(ctx);
-    const newText = `${formatModHeader(sub)}\n\n🔄 Возвращено в очередь ${name}`;
-    const kb      = modKeyboard(subId, sub.user_id);
-    await editModMsg(ctx.api, sub, newText, kb);
   });
 
   // ❌ Отклонить — показать быстрые причины

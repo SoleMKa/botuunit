@@ -141,7 +141,7 @@ function setupUserFlow(composer) {
       '📊 Твоя статистика:\n\n' +
       `📨 Всего отправлено: ${s.total}\n` +
       `✅ Опубликовано: ${s.approved}\n` +
-      `⏸ На рассмотрении: ${Number(s.pending) + Number(s.postponed)}\n` +
+      `⏸ На рассмотрении: ${s.pending}\n` +
       `❌ Отклонено: ${s.rejected}`,
       { reply_markup: MAIN_KB },
     );
