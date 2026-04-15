@@ -72,7 +72,7 @@ module.exports = {
 
   // ─── Submissions ──────────────────────────────────────────────────────────
   createSubmission: db.prepare(
-    'INSERT INTO submissions (user_id, text, media_file_id, media_type) VALUES (?, ?, ?, ?)'
+    "INSERT INTO submissions (user_id, category, text, media_file_id, media_type) VALUES (?, '', ?, ?, ?)"
   ),
   getSubmission:    db.prepare('SELECT * FROM submissions WHERE id = ?'),
   updateStatus:     db.prepare('UPDATE submissions SET status = ?, reject_reason = ? WHERE id = ?'),
