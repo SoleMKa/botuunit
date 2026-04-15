@@ -40,6 +40,11 @@ function rejectReasonsKeyboard(subId) {
 
 const emptyKeyboard = new InlineKeyboard();
 
+function commentKeyboard(subId) {
+  return new InlineKeyboard()
+    .text('➡️ Без комментария', `approve_nc:${subId}`);
+}
+
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 function modName(ctx) {
@@ -135,8 +140,8 @@ async function notifyUser(api, userId, text) {
 
 // ─── Publish to channel ──────────────────────────────────────────────────────
 
-async function publishToChannel(api, submission) {
-  const postText = formatPost(submission.text);
+async function publishToChannel(api, submission, adminComment = null) {
+  const postText = formatPost(submission.text, adminComment);
   const noPreview = { link_preview_options: { is_disabled: true } };
 
   if (submission.media_file_id) {
@@ -156,6 +161,29 @@ async function publishToChannel(api, submission) {
       parse_mode: 'HTML', ...noPreview,
     });
   }
+}
+
+// ─── Approve helper ───────────────────────────────────────────────────────────
+
+async function doApprove(api, ctx, sub, adminComment) {
+  try {
+    await publishToChannel(api, sub, adminComment);
+  } catch (err) {
+    console.error('publish error:', err.message);
+    await ctx.reply(`❗ Ошибка при публикации анонимки #${sub.id}: ${err.message}`);
+    return;
+  }
+
+  db.updateStatus.run('approved', null, sub.id);
+  db.incApproved.run();
+
+  await notifyUser(api, sub.user_id, '✅ Твоя анонимка опубликована в канале!');
+
+  const name = modName(ctx);
+  const time = new Date().toLocaleString('ru-RU', { timeZone: 'Asia/Yekaterinburg' });
+  const commentNote = adminComment ? `\nКомментарий: ${adminComment}` : '';
+  const newText = `${formatModHeader(sub)}\n\n✅ Опубликовано ${name} в ${time}${commentNote}`;
+  await editModMsg(api, sub, newText, null);
 }
 
 // ─── Reject helper ────────────────────────────────────────────────────────────
@@ -263,7 +291,7 @@ function setupModFlow(composer) {
     }
   });
 
-  // ✅ Опубликовать
+  // ✅ Опубликовать — спрашиваем комментарий
   composer.callbackQuery(/^approve:(\d+)$/, async (ctx) => {
     const subId = Number(ctx.match[1]);
     const sub   = db.getSubmission.get(subId);
@@ -271,25 +299,27 @@ function setupModFlow(composer) {
     if (!sub) { await ctx.answerCallbackQuery('Анонимка не найдена'); return; }
     if (sub.status === 'approved') { await ctx.answerCallbackQuery('Уже опубликовано'); return; }
 
+    await ctx.answerCallbackQuery();
+    ctx.session.awaitingCommentFor = subId;
+    ctx.session.awaitingRejectFor  = null;
+    ctx.session.awaitingBanFor     = null;
+    await ctx.reply(
+      `💬 Хочешь добавить комментарий от админа к анонимке #${subId}?\n\nНапиши текст или нажми кнопку:`,
+      { reply_markup: commentKeyboard(subId) },
+    );
+  });
+
+  // ✅ Опубликовать без комментария
+  composer.callbackQuery(/^approve_nc:(\d+)$/, async (ctx) => {
+    const subId = Number(ctx.match[1]);
+    const sub   = db.getSubmission.get(subId);
+
+    if (!sub) { await ctx.answerCallbackQuery('Анонимка не найдена'); return; }
+    if (sub.status === 'approved') { await ctx.answerCallbackQuery('Уже опубликовано'); return; }
+
+    ctx.session.awaitingCommentFor = null;
     await ctx.answerCallbackQuery('Публикуем…');
-
-    try {
-      await publishToChannel(ctx.api, sub);
-    } catch (err) {
-      console.error('publish error:', err.message);
-      await ctx.reply(`❗ Ошибка при публикации анонимки #${subId}: ${err.message}`);
-      return;
-    }
-
-    db.updateStatus.run('approved', null, subId);
-    db.incApproved.run();
-
-    await notifyUser(ctx.api, sub.user_id, '✅ Твоя анонимка опубликована в канале!');
-
-    const name = modName(ctx);
-    const time = new Date().toLocaleString('ru-RU', { timeZone: 'Asia/Yekaterinburg' });
-    const newText = `${formatModHeader(sub)}\n\n✅ Опубликовано ${name} в ${time}`;
-    await editModMsg(ctx.api, sub, newText, null);
+    await doApprove(ctx.api, ctx, sub, null);
   });
 
   // ⏸ Отложить
@@ -386,9 +416,23 @@ function setupModFlow(composer) {
     await ctx.reply(`✏️ Напиши причину бана автора анонимки #${subId}:`);
   });
 
-  // Текстовые сообщения в чате модераторов — причины отклонения/бана
+  // Текстовые сообщения в чате модераторов — комментарий/причины отклонения/бана
   composer.on('message:text', async (ctx, next) => {
-    const { awaitingRejectFor, awaitingBanFor } = ctx.session;
+    const { awaitingCommentFor, awaitingRejectFor, awaitingBanFor } = ctx.session;
+
+    // ── Комментарий от админа ─────────────────────────────────────────────
+    if (awaitingCommentFor != null) {
+      const subId   = awaitingCommentFor;
+      const comment = ctx.message.text;
+      ctx.session.awaitingCommentFor = null;
+
+      const sub = db.getSubmission.get(subId);
+      if (!sub) { await ctx.reply('Анонимка не найдена.'); return; }
+      if (sub.status === 'approved') { await ctx.reply('Уже опубликовано.'); return; }
+
+      await doApprove(ctx.api, ctx, sub, comment);
+      return;
+    }
 
     // ── Причина отклонения ────────────────────────────────────────────────
     if (awaitingRejectFor != null) {
